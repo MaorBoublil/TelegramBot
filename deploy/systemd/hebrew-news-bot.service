@@ -1,0 +1,30 @@
+[Unit]
+Description=Hebrew News Bot - AI-powered Telegram news bot
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+User=bot
+Group=bot
+WorkingDirectory=/opt/hebrew-news-bot
+ExecStart=/opt/hebrew-news-bot/venv/bin/python main.py
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=hebrew-news-bot
+
+# Environment
+Environment=PYTHONPATH=/opt/hebrew-news-bot
+Environment=PYTHONUNBUFFERED=1
+
+# Security
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/hebrew-news-bot/data /opt/hebrew-news-bot/logs
+
+[Install]
+WantedBy=multi-user.target
