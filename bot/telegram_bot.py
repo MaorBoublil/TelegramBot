@@ -1,7 +1,8 @@
 import logging
-import asyncio
+import json
 from typing import Dict, List, Optional
-from datetime import datetime
+from datetime import datetime, timezone
+from aiohttp import web
 
 from telegram import Update, Bot
 from telegram.ext import Application, MessageHandler, CommandHandler, ContextTypes, filters
@@ -22,6 +23,7 @@ class HebrewNewsBot:
         
         # Initialize bot application
         self.application = Application.builder().token(self.bot_token).build()
+        self.application.post_init = self.post_init
         self.bot = self.application.bot
         
         # Setup handlers
@@ -39,7 +41,7 @@ class HebrewNewsBot:
         self.application.add_handler(CommandHandler("stats", self.stats_command))
         self.application.add_handler(CommandHandler("status", self.status_command))
         
-        # Message handler for monitoring channels
+        # Message handler for direct interaction (if any)
         self.application.add_handler(
             MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_message)
         )
@@ -142,37 +144,61 @@ class HebrewNewsBot:
             await update.message.reply_text("❌ שגיאה בבדיקת מצב הבוט")
     
     async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Handle incoming messages from monitored channels"""
+        """Handle incoming messages from users"""
         
         message = update.message
-        if not message or not message.text:
+        content = message.text or message.caption
+        if not message or not content:
             return
         
-        # Check if message is from a monitored channel
-        chat = message.chat
-        channel_username = f"@{chat.username}" if chat.username else str(chat.id)
-        
-        if channel_username not in self.source_channels and str(chat.id) not in self.source_channels:
-            logger.debug(f"Ignoring message from non-monitored channel: {channel_username}")
-            return
-        
-        logger.info(f"Processing message from {channel_username}")
-        
+        # We can add logic here for direct messages to the bot if needed.
+        logger.info(f"Received direct message from {message.chat.id}, ignoring.")
+        # For now, let's just log it. If the bot were in a group, this would handle group messages.
+        await update.message.reply_text("🤖: איני מנהל שיחות פרטיות, אך אני זמין לפקודות כמו /start ו-/help.")
+    
+    async def post_init(self, application: Application):
+        pass
+
+    async def handle_new_post_request(self, request: web.Request):
+        """Handle new post received from the listener via HTTP."""
         try:
-            # Process the news post
+            data = await request.json()
+            content = data.get('content')
+            source_channel = data.get('source_channel')
+            telegram_message_id = data.get('telegram_message_id')
+            
+            if not all([content, source_channel, telegram_message_id]):
+                logger.error("Invalid data received from listener: 'content', 'source_channel', and 'telegram_message_id' are required.")
+                return web.Response(status=400, text="Invalid data")
+
+            logger.info(f"Received post from listener for channel: {source_channel}")
+            
+            timestamp = datetime.now(timezone.utc)
+
             result = await self.news_processor.process_new_post(
-                content=message.text,
-                source_channel=channel_username,
-                telegram_message_id=message.message_id,
-                timestamp=message.date
+                content=content,
+                source_channel=source_channel,
+                telegram_message_id=telegram_message_id,
+                timestamp=timestamp
             )
             
-            # Handle the result
             await self._handle_processing_result(result)
-            
+            return web.Response(status=200, text="OK")
+
+        except json.JSONDecodeError:
+            logger.error("Listener sent invalid JSON.")
+            return web.Response(status=400, text="Invalid JSON")
         except Exception as e:
-            logger.error(f"Error handling message: {e}")
-    
+            logger.error(f"Error processing post from listener: {e}", exc_info=True)
+            return web.Response(status=500, text="Internal Server Error")
+
+    async def get_web_app(self) -> web.Application:
+        """Create and return the aiohttp web application."""
+        app = web.Application()
+        app.router.add_post('/new-post', self.handle_new_post_request)
+        logger.info("Web server routes configured for endpoint /new-post")
+        return app
+
     async def _handle_processing_result(self, result: Dict):
         """Handle the result from news processing"""
         
@@ -297,46 +323,9 @@ class HebrewNewsBot:
         """Handle errors"""
         logger.error(f"Update {update} caused error {context.error}")
     
-    async def start_monitoring(self):
+    def start_monitoring(self):
         """Start the bot and begin monitoring"""
         logger.info("Starting Hebrew News Bot...")
         
-        try:
-            # Start the bot
-            await self.application.initialize()
-            await self.application.start()
-            
-            # Start polling
-            await self.application.updater.start_polling()
-            
-            logger.info("Bot is now running and monitoring channels")
-            
-            # Keep the bot running
-            await self.application.updater.idle()
-            
-        except Exception as e:
-            logger.error(f"Error starting bot: {e}")
-            raise
-        finally:
-            # Cleanup
-            await self.application.stop()
-    
-    async def stop_monitoring(self):
-        """Stop the bot"""
-        logger.info("Stopping Hebrew News Bot...")
-        
-        try:
-            await self.application.stop()
-            logger.info("Bot stopped successfully")
-        except Exception as e:
-            logger.error(f"Error stopping bot: {e}")
-    
-    def run(self):
-        """Run the bot (blocking)"""
-        try:
-            asyncio.run(self.start_monitoring())
-        except KeyboardInterrupt:
-            logger.info("Bot stopped by user")
-        except Exception as e:
-            logger.error(f"Bot crashed: {e}")
-            raise
+        logger.info("Bot is now running and monitoring channels")
+        self.application.run_polling()

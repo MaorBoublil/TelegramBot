@@ -5,6 +5,11 @@ from typing import List
 load_dotenv()
 
 class Config:
+    # Telegram Client API (for listening to public channels)
+    API_ID = os.getenv('API_ID')
+    API_HASH = os.getenv('API_HASH')
+    SESSION_NAME = os.getenv('SESSION_NAME', 'telegram_listener')
+
     # Telegram Bot Configuration
     TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
     TELEGRAM_CHANNEL_ID = os.getenv('TELEGRAM_CHANNEL_ID')
@@ -31,7 +36,7 @@ class Config:
     FAKE_NEWS_MARKER = os.getenv('FAKE_NEWS_MARKER', 'ייתכן ומדובר בפייק')
     
     # Logging
-    LOG_LEVEL = os.getenv('LOG_LEVEL', 'INFO')
+    LOG_LEVEL = os.getenv('LOG_LEVEL', 'DEBUG')
     
     @classmethod
     def validate(cls):
@@ -42,4 +47,5 @@ class Config:
             raise ValueError("TELEGRAM_CHANNEL_ID is required")
         if not cls.SOURCE_CHANNELS:
             raise ValueError("At least one SOURCE_CHANNEL is required")
+        # No validation for API_ID and API_HASH as they are for the standalone listener
         return True

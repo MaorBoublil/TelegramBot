@@ -9,6 +9,7 @@ import logging
 import sys
 import os
 from pathlib import Path
+from aiohttp import web
 
 # Add project root to path
 project_root = Path(__file__).parent
@@ -42,7 +43,7 @@ def create_data_directories():
     os.makedirs(Config.CHROMA_PERSIST_DIRECTORY, exist_ok=True)
     os.makedirs('logs', exist_ok=True)
 
-async def initialize_components():
+def initialize_components():
     """Initialize all bot components"""
     logger = logging.getLogger(__name__)
     
@@ -78,29 +79,41 @@ async def initialize_components():
         raise
 
 async def main():
-    """Main function"""
+    """Main function to initialize and run components concurrently."""
     logger = logging.getLogger(__name__)
     
-    try:
-        # Validate configuration
-        Config.validate()
-        logger.info("Configuration validated successfully")
-        
-        # Create directories
-        create_data_directories()
-        
-        # Initialize components
-        bot = await initialize_components()
-        
-        # Start the bot
-        logger.info("Starting Hebrew News Bot...")
-        await bot.start_monitoring()
-        
-    except KeyboardInterrupt:
-        logger.info("Bot stopped by user (Ctrl+C)")
-    except Exception as e:
-        logger.error(f"Fatal error: {e}")
-        sys.exit(1)
+    # Validate config and create directories
+    Config.validate()
+    logger.info("Configuration validated successfully")
+    create_data_directories()
+    
+    # Initialize components
+    bot = initialize_components()
+    
+    ptb_app = bot.application
+    web_app = await bot.get_web_app()
+    
+    # Setup web server runner
+    runner = web.AppRunner(web_app)
+    await runner.setup()
+    site = web.TCPSite(runner, 'localhost', 8080)
+    
+    # Run both applications concurrently
+    logger.info("Starting Telegram Bot and Web Server...")
+    
+    await ptb_app.initialize()
+    await site.start()
+    await ptb_app.start()
+    await ptb_app.updater.start_polling()
+    
+    # Keep the main function alive to wait for termination signals
+    await asyncio.Event().wait()
+    
+    # Cleanup logic (will be called by shutdown signal)
+    logger.info("Shutting down...")
+    await ptb_app.updater.stop()
+    await ptb_app.stop()
+    await runner.cleanup()
 
 def run_bot():
     """Entry point for running the bot"""
@@ -113,8 +126,10 @@ def run_bot():
     
     try:
         asyncio.run(main())
+    except KeyboardInterrupt:
+        logger.info("Bot stopped by user.")
     except Exception as e:
-        logger.error(f"Bot crashed: {e}")
+        logger.error(f"Bot crashed: {e}", exc_info=True)
         sys.exit(1)
 
 if __name__ == "__main__":
